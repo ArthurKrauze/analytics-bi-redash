@@ -1,0 +1,35 @@
+{
+  "collection": "fato_vendas",
+  "aggregate": [
+    {
+      "$group": {
+        "_id": {
+          "$year": "$dataPedido"
+        },
+        "receita": {
+          "$sum": "$receitaLiquida"
+        }
+      }
+    },
+    {
+      "$project": {
+        "_id": 0,
+        "ano": "$_id",
+        "receita": {
+          "$round": [
+            "$receita",
+            2
+          ]
+        }
+      }
+    },
+    {
+      "$sort": [
+        {
+          "name": "ano",
+          "direction": 1
+        }
+      ]
+    }
+  ]
+}

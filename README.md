@@ -1,93 +1,288 @@
-# Analytics BI com Redash
+# DB L03 — TPC-H, MongoDB e Analytics/BI com Redash
 
+Laboratório didático de **migração de dados e BI**, em Windows/PowerShell:
 
-
-## Getting started
-
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
-
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
-
-## Add your files
-
-* [Create](https://docs.gitlab.com/user/project/repository/web_editor/#create-a-file) or [upload](https://docs.gitlab.com/user/project/repository/web_editor/#upload-a-file) files
-* [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
-
-```
-cd existing_repo
-git remote add origin https://gitlab.com/gilbriatore/2026/database/analytics-bi-redash.git
-git branch -M main
-git push -uf origin main
+```text
+ MySQL (TPC-H já existente)
+   orders + lineitem + customer + part + supplier + nation + region
+                    |
+            Python ETL (JOIN)
+                    |
+                    v
+     MongoDB: tpch_bi.fato_vendas
+                    |
+                    v
+       Redash: consultas e dashboard
 ```
 
-## Integrate with your tools
+O objetivo é criar uma **amostra funcional de 10.000 itens de pedido** e três
+visualizações (receita por região do cliente, receita por ano do pedido e
+top 10 marcas). A quarta consulta, pedidos distintos por segmento, é um
+exercício opcional.
 
-* [Set up project integrations](https://gitlab.com/gilbriatore/2026/database/analytics-bi-redash/-/settings/integrations)
+> **Escopo:** ambiente local de ensino, não produção. O projeto não contém
+> dados TPC-H nem cria um MySQL. Pressupõe que o aluno já tenha o TPC-H
+> carregado em MySQL e que consiga conectá-lo pelo Windows.
 
-## Collaborate with your team
+## 1. Pré-requisitos
 
-* [Invite team members and collaborators](https://docs.gitlab.com/user/project/members/)
-* [Create a new merge request](https://docs.gitlab.com/user/project/merge_requests/creating_merge_requests/)
-* [Automatically close issues from merge requests](https://docs.gitlab.com/user/project/issues/managing_issues/#closing-issues-automatically)
-* [Enable merge request approvals](https://docs.gitlab.com/user/project/merge_requests/approvals/)
-* [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+- Windows 10/11, PowerShell, Git, Docker Desktop (Linux containers).
+- Python 3.11+ com `py` disponível no PowerShell.
+- MySQL com o TPC-H previamente carregado (`orders`, `lineitem`, `customer`,
+  `part`, `supplier`, `nation`, `region`).
+- Portas **27017** (MongoDB) e **5000** (Redash) disponíveis.
+- Memória livre recomendada: **4–8 GB** para o conjunto de contêineres.
 
-## Test and Deploy
+Este laboratório foi preparado com Redash `10.1.0.b50633` (versão legada),
+MongoDB `6.0`, PostgreSQL `13` e Redis `7`. O fluxo completo **ainda precisa
+ser testado no ambiente do professor** antes de ser distribuído à turma.
 
-Use the built-in continuous integration in GitLab.
+## 2. Clonar o repositório
 
-* [Get started with GitLab CI/CD](https://docs.gitlab.com/ci/quick_start/)
-* [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/user/application_security/sast/)
-* [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/topics/autodevops/requirements/)
-* [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/user/clusters/agent/)
-* [Set up protected environments](https://docs.gitlab.com/ci/environments/protected_environments/)
+```powershell
+git clone https://gitlab.com/gilbriatore/2026/database/analytics-bi-redash.git
+cd analytics-bi-redash
+.\scripts\preflight.ps1
+```
 
-***
+Se a política do PowerShell impedir a execução de `.ps1`, os comandos podem
+ser executados individualmente; não é necessário mudar a política global.
 
-# Editing this README
+## 3. Configurar `.env` e Python
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+```powershell
+Copy-Item .env.example .env
+notepad .env
+py -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
 
-## Suggestions for a good README
+No `.env`, configure o MySQL existente:
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+| Variável | Exemplo | Descrição |
+|---|---|---|
+| `MYSQL_HOST` | `127.0.0.1` | Host acessível no Windows |
+| `MYSQL_PORT` | `3306` | Porta publicada do MySQL |
+| `MYSQL_USER` | `root` | Usuário autorizado |
+| `MYSQL_PASSWORD` | *(sua senha)* | Senha local |
+| `MYSQL_DATABASE` | `tpch` | Schema com as tabelas TPC-H |
+| `ETL_LIMIT` | `10000` | Itens a carregar |
+| `ETL_BATCH` | `1000` | Lote de inserção |
+| `MONGO_URI` | `mongodb://127.0.0.1:27017` | MongoDB acessível do Windows |
 
-## Name
-Choose a self-explaining name for your project.
+**Gere duas chaves longas diferentes** para `REDASH_COOKIE_SECRET` e
+`REDASH_SECRET_KEY`. Exemplo de geração no PowerShell:
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+```powershell
+py -c "import secrets; print(secrets.token_hex(32))"
+py -c "import secrets; print(secrets.token_hex(32))"
+```
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+Copie cada resultado para a variável correspondente no `.env`.
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+**Nunca versione `.env`**: o `.gitignore` já o exclui.
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+## 4. Inicializar MongoDB e Redash
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+No diretório do repositório:
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+```powershell
+docker compose config
+docker compose up -d mongodb postgres redis
+docker compose ps
+```
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+**Somente na primeira execução, com o volume de metadados do Redash novo:**
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
+```powershell
+docker compose run --rm server create_db
+```
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+Depois:
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
+```powershell
+docker compose up -d server worker scheduler
+docker compose ps
+```
 
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+Abra <http://localhost:5000>, aguarde a inicialização e crie o administrador.
+O PostgreSQL neste Compose **armazena somente os metadados do Redash**;
+não substitui o MySQL de origem.
 
-## License
-For open source projects, say how it is licensed.
+Se não abrir:
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+```powershell
+docker compose logs --tail 100 server worker scheduler postgres
+```
+
+## 5. Executar ETL MySQL → MongoDB
+
+```powershell
+.\.venv\Scripts\python.exe -m etl.migrate
+```
+
+O ETL:
+1. Consulta a amostra no MySQL com `JOIN`s e `ORDER BY`.
+2. Define o **grão**: um item de pedido (`l_orderkey` + `l_linenumber`).
+3. Calcula `receitaLiquida = l_extendedprice * (1 - l_discount)`.
+4. Insere/atualiza `tpch_bi.fato_vendas` em lotes usando `upsert`.
+5. Cria índices didáticos para data, região do cliente e marca.
+
+A implementação física usa **dimensões incorporadas (embedding)**.
+O modelo estrela é **conceitual**, não quatro coleções `dim_*` obrigatórias.
+Veja [docs/MODELO.md](docs/MODELO.md).
+
+**Limitação:** os primeiros 10 mil itens ordenados por pedido não formam
+uma amostra representativa de toda a base. Não use o dashboard para fazer
+inferências estatísticas sobre todas as vendas TPC-H.
+
+## 6. Verificar carga
+
+```powershell
+docker compose exec mongodb mongosh tpch_bi --eval 'db.fato_vendas.countDocuments({})'
+docker compose exec mongodb mongosh tpch_bi --eval 'printjson(db.fato_vendas.findOne())'
+```
+
+Resultado esperado em uma coleção vazia: **10.000 documentos**.
+
+Execute a validação cruzada:
+
+```powershell
+.\.venv\Scripts\python.exe -m etl.validate
+```
+
+O script compara **quantidade de itens** e **soma da receita líquida** com
+a mesma amostra no MySQL. Uma diferença maior que R$ 0,05 indica
+divergência. Em TPC-H os valores são sintéticos; "R$" é apenas uma unidade
+de apresentação escolhida para o exercício, não moeda nativa do benchmark.
+
+**Reexecução:** o ETL atualiza os documentos com o mesmo `_id`, mas não
+remove registros de uma execução anterior com limite maior. Se for
+necessário recomeçar com uma coleção limpa (APAGA SOMENTE a fato do lab):
+
+```powershell
+docker compose exec mongodb mongosh tpch_bi --eval 'db.fato_vendas.drop()'
+.\.venv\Scripts\python.exe -m etl.migrate
+.\.venv\Scripts\python.exe -m etl.validate
+```
+
+## 7. Configurar MongoDB no Redash
+
+1. Acesse <http://localhost:5000>.
+2. Vá a **Settings → Data Sources → New Data Source → MongoDB**.
+3. Nome: `TPC-H MongoDB`.
+4. **Connection String:** `mongodb://mongodb:27017/tpch_bi`.
+5. **DB Name:** `tpch_bi` (campo separado, quando disponível).
+6. **Test Connection** e **Save**.
+
+O hostname `mongodb` é o nome do serviço na rede Docker.
+`localhost` **não** aponta para MongoDB a partir do contêiner Redash.
+
+A sintaxe de consultas MongoDB do Redash é JSON, com chaves `collection`
+e `aggregate`. O `$sort` do Redash usa **array de pares
+`name`/`direction`**, diferente do pipeline `mongosh` convencional.
+As consultas em `queries/` já seguem esse formato.
+
+## 8. Consultas e visualizações
+
+No Redash: **Create → New Query**, selecione `TPC-H MongoDB`,
+cole o conteúdo **integral** do arquivo JSON correspondente, execute e salve.
+
+| Arquivo | Visualização sugerida | Eixo X | Eixo Y |
+|---|---|---|---|
+| `queries/01_receita_regiao_cliente.json` | Barras | `regiao` | `receita` |
+| `queries/02_receita_ano_pedido.json` | Linha | `ano` | `receita` |
+| `queries/03_top_marcas.json` | Barras | `marca` | `receita` |
+| `queries/04_pedidos_distintos_por_segmento.json` | Barras (opcional) | `segmento` | `pedidos` |
+
+Para cada consulta: **New Visualization → Save**.
+Depois: **Create → New Dashboard**, nome
+`TPC-H — Analytics e BI`, **Add Widget** para incluir os três gráficos.
+
+**Atenção:** a região da consulta 01 é a **região do cliente**,
+não a do fornecedor. Pedidos distintos exigem desduplicar `pedidoId`
+porque a fato tem uma linha por item.
+
+## 9. Encerramento e trabalho das equipes
+
+Perguntas para discussão:
+- Qual é o grão da fato e por que isso importa?
+- Por que o protótipo usa embedding e não referencing?
+- Quando `$lookup` e `$unwind` seriam necessários?
+- Como evitar contar um pedido várias vezes?
+- Como mudar o ETL para obter uma amostra representativa?
+- Quais consultas e dimensões seriam necessárias para outros KPIs?
+
+Cada equipe deverá **pesquisar, desenhar, implementar e validar seu próprio
+recorte analítico**. O protótipo não é a solução obrigatória do TDE.
+Veja [docs/ATIVIDADE-EQUIPES.md](docs/ATIVIDADE-EQUIPES.md).
+
+## 10. Encerrar sem perder os dados
+
+```powershell
+docker compose stop
+docker compose start
+# Remover contêineres, preservando volumes:
+docker compose down
+```
+
+**Não execute `docker compose down -v`** se quiser preservar os dados do
+MongoDB e os usuários/dashboards do Redash.
+
+## Solução de problemas
+
+| Sintoma | Verificação |
+|---|---|
+| `Access denied` no MySQL | Usuário, senha, privilégios, `.env` |
+| `Connection refused` no MySQL | Host/porta publicada no Docker do MySQL |
+| Redash não abre | `docker compose logs --tail 100 server` |
+| Falha em `create_db` | Espere PostgreSQL saudável; verifique `docker compose ps` |
+| Redash não acessa MongoDB | Use hostname `mongodb` e DB Name `tpch_bi` |
+| Portas ocupadas | `docker ps` e mapeamentos em `compose.yaml` |
+| Quantidade incorreta | Limpe somente a coleção piloto e refaça a carga |
+| `ETL_LIMIT` alterado | A validação supõe coleção compatível com o limite atual |
+| Dashboard vazio | Execute queries e confira documentos/intervalo temporal |
+
+## Arquivos do repositório
+
+```text
+analytics-bi-redash/
+├── README.md
+├── .gitignore
+├── .env.example
+├── compose.yaml
+├── requirements.txt
+├── etl/
+│   ├── __init__.py
+│   ├── migrate.py
+│   └── validate.py
+├── queries/
+│   ├── 01_receita_regiao_cliente.json
+│   ├── 02_receita_ano_pedido.json
+│   ├── 03_top_marcas.json
+│   └── 04_pedidos_distintos_por_segmento.json
+├── scripts/
+│   ├── preflight.ps1
+│   ├── setup.ps1
+│   └── validate-files.py
+└── docs/
+    ├── MODELO.md
+    └── ATIVIDADE-EQUIPES.md
+```
+
+## Validação estática do projeto
+
+```powershell
+py scripts/validate-files.py
+docker compose config
+```
+
+A primeira valida sintaxe Python e JSON das consultas; a segunda verifica
+a configuração Compose (requer `.env`). **Essas verificações não substituem
+o teste integrado com MySQL, MongoDB e Redash**.
+
+## Referências
+
+- [Redash — MongoDB Querying](https://redash.io/help/data-sources/querying/mongodb/)
+- [Redash — Open Source Setup](https://redash.io/help/open-source/setup/)
+- [TPC-H — TPC Benchmark H](https://www.tpc.org/tpch/)

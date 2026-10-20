@@ -1,0 +1,36 @@
+{
+  "collection": "fato_vendas",
+  "aggregate": [
+    {
+      "$group": {
+        "_id": "$produto.marca",
+        "receita": {
+          "$sum": "$receitaLiquida"
+        }
+      }
+    },
+    {
+      "$project": {
+        "_id": 0,
+        "marca": "$_id",
+        "receita": {
+          "$round": [
+            "$receita",
+            2
+          ]
+        }
+      }
+    },
+    {
+      "$sort": [
+        {
+          "name": "receita",
+          "direction": -1
+        }
+      ]
+    },
+    {
+      "$limit": 10
+    }
+  ]
+}

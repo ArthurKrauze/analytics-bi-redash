@@ -1,0 +1,36 @@
+{
+  "collection": "fato_vendas",
+  "aggregate": [
+    {
+      "$group": {
+        "_id": {
+          "segmento": "$cliente.segmento",
+          "pedido": "$pedidoId"
+        }
+      }
+    },
+    {
+      "$group": {
+        "_id": "$_id.segmento",
+        "pedidos": {
+          "$sum": 1
+        }
+      }
+    },
+    {
+      "$project": {
+        "_id": 0,
+        "segmento": "$_id",
+        "pedidos": 1
+      }
+    },
+    {
+      "$sort": [
+        {
+          "name": "pedidos",
+          "direction": -1
+        }
+      ]
+    }
+  ]
+}
