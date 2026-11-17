@@ -1,0 +1,66 @@
+{
+  "collection": "fato_entregas",
+  "aggregate": [
+    {
+      "$project": {
+        "faixa": {
+          "$switch": {
+            "branches": [
+              {
+                "case": {
+                  "$eq": [
+                    "$entrega.diasAtraso",
+                    0
+                  ]
+                },
+                "then": "0. No prazo"
+              },
+              {
+                "case": {
+                  "$lte": [
+                    "$entrega.diasAtraso",
+                    7
+                  ]
+                },
+                "then": "1. De 1 a 7 dias"
+              },
+              {
+                "case": {
+                  "$lte": [
+                    "$entrega.diasAtraso",
+                    14
+                  ]
+                },
+                "then": "2. De 8 a 14 dias"
+              }
+            ],
+            "default": "3. Acima de 14 dias"
+          }
+        }
+      }
+    },
+    {
+      "$group": {
+        "_id": "$faixa",
+        "total_itens": {
+          "$sum": 1
+        }
+      }
+    },
+    {
+      "$project": {
+        "_id": 0,
+        "faixa": "$_id",
+        "total_itens": 1
+      }
+    },
+    {
+      "$sort": [
+        {
+          "name": "faixa",
+          "direction": 1
+        }
+      ]
+    }
+  ]
+}

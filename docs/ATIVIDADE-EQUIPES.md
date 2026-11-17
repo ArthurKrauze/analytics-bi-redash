@@ -1,20 +1,18 @@
-# Atividade após a demonstração
+# Atendimento ao enunciado
 
-Cada equipe recebe uma **pergunta analítica diferente**, sem receber a query
-resolvida. Entregáveis: questão de negócio, modelo conceitual, justificativa
-de embedding/referencing, ETL reprodutível, validação contra MySQL, queries
-e dashboard no Redash.
+Este projeto desenvolve o Desafio 12, com foco na taxa de atraso de itens e na decisão de priorizar investigações logísticas.
 
-Possíveis temas: desempenho regional; evolução temporal; mix de marcas;
-fornecedores; segmentos; faixas de desconto; concentração; fluxo entre
-região de cliente e fornecedor; pedidos distintos; tipos de produto.
+| Etapa | Evidência no projeto |
+|---|---|
+| Investigação gerencial | docs/PROJETO.md |
+| Modelo dimensional | docs/MODELO.md, grão e dimensões |
+| MongoDB | etl/model.py e documento_exemplo.json real |
+| ETL reproduzível | scripts/run-native.ps1 ou scripts/run-project.ps1, etl/seed.py e etl/migrate.py |
+| Validação | etl/validate.py e artifacts/validacao.json |
+| Consultas analíticas | Seis pipelines em queries/ |
+| Dashboard Redash | etl/redash_setup.py, docs/DASHBOARD.md e evidência real após cadastro |
+| Análise e apresentação | artifacts/ANALISE_GERENCIAL.md, docs/APRESENTACAO.md e material da apresentação |
 
-**Cuidados de avaliação:**
-- Explicar o grão (item, pedido, cliente etc.).
-- Demonstrar a origem de cada atributo no TPC-H.
-- Validar totais com a mesma amostra e mesma regra de negócio.
-- Diferenciar região do cliente e do fornecedor.
-- Distinguir contagem de itens de contagem de pedidos distintos.
-- Não generalizar conclusões a partir dos primeiros 10 mil itens.
+R1: integração, grão, dimensões, regras de qualidade, ETL e validação. R2: indicadores pertinentes, gráfico principal e visualizações complementares no Redash. R3: interpretação apoiada em números efetivamente processados, com volumes e limites explicitados.
 
-O professor distribui temas e valida cada consulta antes da atividade.
+A implantação do Redash depende de um ambiente compatível com containers. A VM atual, sem virtualização, utiliza MySQL e MongoDB nativos. Ver docs/ENTREGA.md para distinguir o que foi executado do que permanece pendente.

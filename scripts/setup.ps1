@@ -1,10 +1,11 @@
 $ErrorActionPreference = "Stop"
-if (!(Test-Path ".env")) {
-  Copy-Item ".env.example" ".env"
-  Write-Host "Arquivo .env criado. Edite credenciais do MySQL e segredos do Redash."
-} else {
-  Write-Host "Arquivo .env já existe; preservado."
+Set-Location (Split-Path $PSScriptRoot -Parent)
+if (!(Test-Path ".venv/Scripts/python.exe")) {
+  py -m venv .venv
+  if ($LASTEXITCODE -ne 0) { throw "Falha ao criar ambiente Python." }
 }
-py -m venv .venv
-& ".\.venv\Scripts\python.exe" -m pip install -r requirements.txt
-Write-Host "Dependências instaladas. Agora configure .env e siga o README."
+& ".venv/Scripts/python.exe" -m pip install -r requirements-lock.txt
+if ($LASTEXITCODE -ne 0) { throw "Falha ao instalar dependências." }
+& ".venv/Scripts/python.exe" scripts/configure.py
+if ($LASTEXITCODE -ne 0) { throw "Falha ao configurar .env." }
+Write-Host "Configuração pronta. Segredos locais estão no .env."

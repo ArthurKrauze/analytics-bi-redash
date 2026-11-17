@@ -1,10 +1,11 @@
 $ErrorActionPreference = "Stop"
-Write-Host "=== Pré-requisitos ==="
+Set-Location (Split-Path $PSScriptRoot -Parent)
 foreach ($cmd in @("git", "docker", "py")) {
-  $found = Get-Command $cmd -ErrorAction SilentlyContinue
-  if ($found) { Write-Host "[OK] $cmd" } else { Write-Warning "[FALTA] $cmd" }
+  if (!(Get-Command $cmd -ErrorAction SilentlyContinue)) { throw "Pré-requisito ausente: $cmd" }
 }
 docker compose version
-docker ps --format "table {{.Names}}\t{{.Ports}}"
-Write-Host "`nVerifique se as portas 27017 e 5000 estão livres e se o MySQL está acessível."
-Write-Host "O MySQL TPC-H NÃO é criado por este projeto."
+if ($LASTEXITCODE -ne 0) { throw "Docker Compose indisponível." }
+docker info --format '{{.ServerVersion}}'
+if ($LASTEXITCODE -ne 0) { throw "Abra o Docker Desktop e aguarde o engine iniciar." }
+Write-Host "Verifique as portas 3307 (MySQL), 27017 (MongoDB) e 5000 (Redash)."
+Write-Host "O Compose inclui o MySQL e o projeto gera o TPC-H automaticamente."

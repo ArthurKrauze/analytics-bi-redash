@@ -6,3 +6,10 @@ __pycache__/
 .idea/
 .vscode/
 .DS_Store
+artifacts/*
+!artifacts/.gitkeep
+# Evidências verificadas para a entrega podem ser adicionadas explicitamente.
+.runtime/
+.codex-finalizer/
+entrega/*.zip
+.chart-data-*/

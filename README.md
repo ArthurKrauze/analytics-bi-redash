@@ -1,288 +1,146 @@
-# DB L03 — TPC-H, MongoDB e Analytics/BI com Redash
+# Equipe 12 — Atrasos nas entregas
 
-Laboratório didático de **migração de dados e BI**, em Windows/PowerShell:
+Projeto de Data Analytics e BI para identificar onde concentrar a investigação de falhas logísticas. O indicador principal é a **taxa de atraso de itens de pedido**.
 
 ```text
- MySQL (TPC-H já existente)
-   orders + lineitem + customer + part + supplier + nation + region
-                    |
-            Python ETL (JOIN)
-                    |
-                    v
-     MongoDB: tpch_bi.fato_vendas
-                    |
-                    v
-       Redash: consultas e dashboard
+TPC-H dbgen (DuckDB, SF 0.01)
+           | preparação inicial da origem
+           v
+MySQL: oito tabelas TPC-H
+           | ETL Python, integração e qualidade
+           v
+MongoDB: tpch_bi.fato_entregas
+           | Aggregation Framework
+           v
+Redash: indicadores, gráficos e tabela de fornecedores
 ```
 
-O objetivo é criar uma **amostra funcional de 10.000 itens de pedido** e três
-visualizações (receita por região do cliente, receita por ano do pedido e
-top 10 marcas). A quarta consulta, pedidos distintos por segmento, é um
-exercício opcional.
+O DuckDB gera somente a base de origem. A extração da ETL e a validação usam **MySQL**, conforme o enunciado. A versão pequena contém toda a base gerada nessa escala, sem cortar os primeiros 10 mil itens.
 
-> **Escopo:** ambiente local de ensino, não produção. O projeto não contém
-> dados TPC-H nem cria um MySQL. Pressupõe que o aluno já tenha o TPC-H
-> carregado em MySQL e que consiga conectá-lo pelo Windows.
+## Execução nesta VM, sem virtualização
 
-## 1. Pré-requisitos
-
-- Windows 10/11, PowerShell, Git, Docker Desktop (Linux containers).
-- Python 3.11+ com `py` disponível no PowerShell.
-- MySQL com o TPC-H previamente carregado (`orders`, `lineitem`, `customer`,
-  `part`, `supplier`, `nation`, `region`).
-- Portas **27017** (MongoDB) e **5000** (Redash) disponíveis.
-- Memória livre recomendada: **4–8 GB** para o conjunto de contêineres.
-
-Este laboratório foi preparado com Redash `10.1.0.b50633` (versão legada),
-MongoDB `6.0`, PostgreSQL `13` e Redis `7`. O fluxo completo **ainda precisa
-ser testado no ambiente do professor** antes de ser distribuído à turma.
-
-## 2. Clonar o repositório
+Requisitos: Windows x64, Python 3.11+ (`py`), conexão à internet para os downloads iniciais e aproximadamente 3 GB livres. MySQL e MongoDB usam distribuições portáteis oficiais e não registram serviços do Windows. Os bancos escutam somente em localhost.
 
 ```powershell
-git clone https://gitlab.com/gilbriatore/2026/database/analytics-bi-redash.git
-cd analytics-bi-redash
-.\scripts\preflight.ps1
+cd E:\pucpr\database\analytics-bi-redash
+.\scripts\run-native.ps1
 ```
 
-Se a política do PowerShell impedir a execução de `.ps1`, os comandos podem
-ser executados individualmente; não é necessário mudar a política global.
+O script configura Python e `.env`, baixa os bancos para `.runtime/`, gera TPC-H no MySQL, executa a ETL, valida e exporta as evidências. Os arquivos `.env`, `.venv/` e `.runtime/` não entram no Git.
 
-## 3. Configurar `.env` e Python
+Se a política do PowerShell impedir scripts, execute os módulos individualmente:
 
 ```powershell
-Copy-Item .env.example .env
-notepad .env
 py -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-```
-
-No `.env`, configure o MySQL existente:
-
-| Variável | Exemplo | Descrição |
-|---|---|---|
-| `MYSQL_HOST` | `127.0.0.1` | Host acessível no Windows |
-| `MYSQL_PORT` | `3306` | Porta publicada do MySQL |
-| `MYSQL_USER` | `root` | Usuário autorizado |
-| `MYSQL_PASSWORD` | *(sua senha)* | Senha local |
-| `MYSQL_DATABASE` | `tpch` | Schema com as tabelas TPC-H |
-| `ETL_LIMIT` | `10000` | Itens a carregar |
-| `ETL_BATCH` | `1000` | Lote de inserção |
-| `MONGO_URI` | `mongodb://127.0.0.1:27017` | MongoDB acessível do Windows |
-
-**Gere duas chaves longas diferentes** para `REDASH_COOKIE_SECRET` e
-`REDASH_SECRET_KEY`. Exemplo de geração no PowerShell:
-
-```powershell
-py -c "import secrets; print(secrets.token_hex(32))"
-py -c "import secrets; print(secrets.token_hex(32))"
-```
-
-Copie cada resultado para a variável correspondente no `.env`.
-
-**Nunca versione `.env`**: o `.gitignore` já o exclui.
-
-## 4. Inicializar MongoDB e Redash
-
-No diretório do repositório:
-
-```powershell
-docker compose config
-docker compose up -d mongodb postgres redis
-docker compose ps
-```
-
-**Somente na primeira execução, com o volume de metadados do Redash novo:**
-
-```powershell
-docker compose run --rm server create_db
-```
-
-Depois:
-
-```powershell
-docker compose up -d server worker scheduler
-docker compose ps
-```
-
-Abra <http://localhost:5000>, aguarde a inicialização e crie o administrador.
-O PostgreSQL neste Compose **armazena somente os metadados do Redash**;
-não substitui o MySQL de origem.
-
-Se não abrir:
-
-```powershell
-docker compose logs --tail 100 server worker scheduler postgres
-```
-
-## 5. Executar ETL MySQL → MongoDB
-
-```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-lock.txt
+.\.venv\Scripts\python.exe scripts/configure.py
+.\.venv\Scripts\python.exe -m etl.native start
+.\.venv\Scripts\python.exe -m etl.seed
 .\.venv\Scripts\python.exe -m etl.migrate
+.\.venv\Scripts\python.exe -m etl.validate
+.\.venv\Scripts\python.exe -m etl.evidence
 ```
 
-O ETL:
-1. Consulta a amostra no MySQL com `JOIN`s e `ORDER BY`.
-2. Define o **grão**: um item de pedido (`l_orderkey` + `l_linenumber`).
-3. Calcula `receitaLiquida = l_extendedprice * (1 - l_discount)`.
-4. Insere/atualiza `tpch_bi.fato_vendas` em lotes usando `upsert`.
-5. Cria índices didáticos para data, região do cliente e marca.
-
-A implementação física usa **dimensões incorporadas (embedding)**.
-O modelo estrela é **conceitual**, não quatro coleções `dim_*` obrigatórias.
-Veja [docs/MODELO.md](docs/MODELO.md).
-
-**Limitação:** os primeiros 10 mil itens ordenados por pedido não formam
-uma amostra representativa de toda a base. Não use o dashboard para fazer
-inferências estatísticas sobre todas as vendas TPC-H.
-
-## 6. Verificar carga
+O modo nativo permite comprovar MySQL, MongoDB e os indicadores. **O Redash continua exigindo um ambiente compatível.** Nesta VM sem virtualização, a criação efetiva do dashboard Redash fica pendente. Os resultados CSV e a apresentação são apoio à demonstração, sem substituir esse requisito.
 
 ```powershell
-docker compose exec mongodb mongosh tpch_bi --eval 'db.fato_vendas.countDocuments({})'
-docker compose exec mongodb mongosh tpch_bi --eval 'printjson(db.fato_vendas.findOne())'
+.\.venv\Scripts\python.exe -m etl.native status
+# Encerramento normal dos dois bancos deste projeto:
+.\.venv\Scripts\python.exe -m etl.native stop
 ```
 
-Resultado esperado em uma coleção vazia: **10.000 documentos**.
+Os dados ficam em `.runtime/mysql-data` e `.runtime/mongo-data`. Reexecutar o seed preserva a base existente quando o manifesto e as contagens conferem. Uma base preenchida sem manifesto não é sobrescrita.
 
-Execute a validação cruzada:
+## Execução completa em computador com Docker
+
+Copie o projeto para um Windows com Docker Desktop e virtualização habilitada. Os downloads iniciais precisam de internet. Não execute os dois modos simultaneamente nas mesmas portas.
 
 ```powershell
+.\scripts\preflight.ps1
+.\scripts\run-project.ps1
+```
+
+O script inclui MySQL, MongoDB, PostgreSQL, Redis e Redash, inicializa os metadados quando necessário e cria/reutiliza as consultas e visualizações por API. A criação do administrador ocorre localmente. Login e senha ficam no `.env`, sem exibição nos logs ou evidências. A URL final fica em `artifacts/redash.json`.
+
+Portas: MySQL `3307`, MongoDB `27017`, Redash `5000`. No Redash, o endereço do MongoDB é `mongodb://mongodb:27017`, banco `tpch_bi`. PostgreSQL armazena apenas os metadados do Redash.
+
+As imagens conservam a compatibilidade com a referência didática: MySQL 8.0, MongoDB 6.0, Redash 10.1.0.b50633, PostgreSQL 13 e Redis 7. O modo nativo usa MySQL 8.0.44 e MongoDB 6.0.26.
+
+As versões Python efetivamente testadas estão fixadas em `requirements-lock.txt`; o setup utiliza esse arquivo. `requirements.txt` documenta as dependências diretas.
+
+## Indicadores e consultas
+
+| Arquivo em queries/ | Uso |
+|---|---|
+| 01_resumo_atrasos.json | Total, atrasados, taxa e média entre atrasados |
+| 02_atrasos_modalidade.json | Gráfico principal: taxa por modalidade (%) |
+| 03_evolucao_mensal.json | Complemento: taxa por mês da data comprometida (%) |
+| 04_fornecedores.json | Tabela com volume, atrasados, taxa e gravidade |
+| 05_faixas_atraso.json | Distribuição em dias corridos |
+| 06_atrasos_regiao_cliente.json | Comparação por região do cliente |
+
+Todas consultam `fato_entregas`. O JSON do Redash usa lista `name/direction` no `$sort`. Para executar diretamente pelo PyMongo, `etl.analytics.mongo_pipeline` converte essa etapa para o formato nativo. As consultas também podem ser cadastradas manualmente conforme [docs/DASHBOARD.md](docs/DASHBOARD.md).
+
+## Regras essenciais
+
+- Grão: uma linha de `lineitem`, chave `(l_orderkey, l_linenumber)`.
+- Atraso: `l_receiptdate > l_commitdate`. Recebimento no compromisso é pontual.
+- Dias de atraso: `max(recebimento - compromisso, 0)`, em dias corridos.
+- Taxa: itens atrasados / total de itens × 100. Não é uma taxa por pedido nem ponderada por unidades.
+- Média: soma dos dias / número de itens atrasados. Sem atrasados, média nula, exibida como não aplicável.
+- Mês: data comprometida, que representa a coorte de compromissos a avaliar.
+- Embedding: atributos dimensionais dentro de cada documento, sem necessidade de `$lookup` nas consultas principais.
+
+## Reexecução e qualidade
+
+A ETL lê um snapshot consistente do MySQL. Cada carga monta uma coleção temporária, verifica a quantidade e cria índices. Somente então substitui atomicamente `fato_entregas`. Uma carga inválida preserva a coleção publicada. A operação substitui o recorte analítico completo e evita resíduos de limites anteriores. Não execute seed, ETL ou validação simultaneamente.
+
+`ETL_LIMIT=0` usa todos os itens da base. Um valor positivo seleciona os primeiros itens em ordem de pedido/item. Esse recorte é determinístico e não representa uma amostra aleatória. ETL e validação usam a mesma seleção. Para a entrega, recomenda-se conservar o valor zero na escala pequena.
+
+A validação confere chaves e **todos os atributos transformados**, além de contagens e medidas gerais, por modalidade e por mês. Ela reprova base vazia, documentos ausentes/excedentes, diferenças de dimensão e medidas incorretas. As regras de qualidade rejeitam datas inválidas, recebimento anterior ao envio, quantidade inválida e relacionamentos órfãos. Uma data comprometida anterior ao envio pode existir no TPC-H e não é descartada automaticamente.
+
+```powershell
+.\.venv\Scripts\python.exe scripts/validate-files.py
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+# Exige os dois bancos em execução:
 .\.venv\Scripts\python.exe -m etl.validate
 ```
 
-O script compara **quantidade de itens** e **soma da receita líquida** com
-a mesma amostra no MySQL. Uma diferença maior que R$ 0,05 indica
-divergência. Em TPC-H os valores são sintéticos; "R$" é apenas uma unidade
-de apresentação escolhida para o exercício, não moeda nativa do benchmark.
+## Evidências e apresentação
 
-**Reexecução:** o ETL atualiza os documentos com o mesmo `_id`, mas não
-remove registros de uma execução anterior com limite maior. Se for
-necessário recomeçar com uma coleção limpa (APAGA SOMENTE a fato do lab):
+Execução verificada em 17/11/2026: **60.175 itens**, **37.897 atrasados**, taxa de **62,98%** e média de **41,59 dias entre atrasados**, com zero divergências entre os bancos. Consulte [os resultados completos](docs/RESULTADOS.md).
 
-```powershell
-docker compose exec mongodb mongosh tpch_bi --eval 'db.fato_vendas.drop()'
-.\.venv\Scripts\python.exe -m etl.migrate
-.\.venv\Scripts\python.exe -m etl.validate
-```
+Abra `artifacts/PAINEL_OFFLINE.html` no navegador para apresentar os gráficos sem depender de serviços web. O material editável fica em `apresentacao/Equipe12-Atrasos.pptx`. O painel é apoio offline e não substitui o dashboard Redash pendente.
 
-## 7. Configurar MongoDB no Redash
+| Arquivo gerado | Conteúdo |
+|---|---|
+| artifacts/origem.json | Gerador, escala e contagens da origem |
+| artifacts/etl.json | Execução e quantidade publicada |
+| artifacts/validacao.json | Correspondência exata entre MySQL e MongoDB |
+| artifacts/resultados.json e *.csv | Saídas reais dos pipelines |
+| artifacts/documento_exemplo.json | Exemplo real da representação documental |
+| artifacts/ANALISE_GERENCIAL.md | Interpretação gerada com os dados processados |
+| artifacts/PAINEL_OFFLINE.html | Gráficos offline com resultados processados |
+| artifacts/redash.json | URL do dashboard, somente após execução no Redash |
 
-1. Acesse <http://localhost:5000>.
-2. Vá a **Settings → Data Sources → New Data Source → MongoDB**.
-3. Nome: `TPC-H MongoDB`.
-4. **Connection String:** `mongodb://mongodb:27017/tpch_bi`.
-5. **DB Name:** `tpch_bi` (campo separado, quando disponível).
-6. **Test Connection** e **Save**.
+Materiais: [problema e métricas](docs/PROJETO.md), [modelo dimensional](docs/MODELO.md), [dashboard](docs/DASHBOARD.md), [roteiro de 10 minutos](docs/APRESENTACAO.md) e [estado da entrega](docs/ENTREGA.md).
 
-O hostname `mongodb` é o nome do serviço na rede Docker.
-`localhost` **não** aponta para MongoDB a partir do contêiner Redash.
-
-A sintaxe de consultas MongoDB do Redash é JSON, com chaves `collection`
-e `aggregate`. O `$sort` do Redash usa **array de pares
-`name`/`direction`**, diferente do pipeline `mongosh` convencional.
-As consultas em `queries/` já seguem esse formato.
-
-## 8. Consultas e visualizações
-
-No Redash: **Create → New Query**, selecione `TPC-H MongoDB`,
-cole o conteúdo **integral** do arquivo JSON correspondente, execute e salve.
-
-| Arquivo | Visualização sugerida | Eixo X | Eixo Y |
-|---|---|---|---|
-| `queries/01_receita_regiao_cliente.json` | Barras | `regiao` | `receita` |
-| `queries/02_receita_ano_pedido.json` | Linha | `ano` | `receita` |
-| `queries/03_top_marcas.json` | Barras | `marca` | `receita` |
-| `queries/04_pedidos_distintos_por_segmento.json` | Barras (opcional) | `segmento` | `pedidos` |
-
-Para cada consulta: **New Visualization → Save**.
-Depois: **Create → New Dashboard**, nome
-`TPC-H — Analytics e BI`, **Add Widget** para incluir os três gráficos.
-
-**Atenção:** a região da consulta 01 é a **região do cliente**,
-não a do fornecedor. Pedidos distintos exigem desduplicar `pedidoId`
-porque a fato tem uma linha por item.
-
-## 9. Encerramento e trabalho das equipes
-
-Perguntas para discussão:
-- Qual é o grão da fato e por que isso importa?
-- Por que o protótipo usa embedding e não referencing?
-- Quando `$lookup` e `$unwind` seriam necessários?
-- Como evitar contar um pedido várias vezes?
-- Como mudar o ETL para obter uma amostra representativa?
-- Quais consultas e dimensões seriam necessárias para outros KPIs?
-
-Cada equipe deverá **pesquisar, desenhar, implementar e validar seu próprio
-recorte analítico**. O protótipo não é a solução obrigatória do TDE.
-Veja [docs/ATIVIDADE-EQUIPES.md](docs/ATIVIDADE-EQUIPES.md).
-
-## 10. Encerrar sem perder os dados
+## Preservar o ambiente Docker
 
 ```powershell
 docker compose stop
 docker compose start
-# Remover contêineres, preservando volumes:
+# Remove somente contêineres, preservando volumes:
 docker compose down
 ```
 
-**Não execute `docker compose down -v`** se quiser preservar os dados do
-MongoDB e os usuários/dashboards do Redash.
-
-## Solução de problemas
-
-| Sintoma | Verificação |
-|---|---|
-| `Access denied` no MySQL | Usuário, senha, privilégios, `.env` |
-| `Connection refused` no MySQL | Host/porta publicada no Docker do MySQL |
-| Redash não abre | `docker compose logs --tail 100 server` |
-| Falha em `create_db` | Espere PostgreSQL saudável; verifique `docker compose ps` |
-| Redash não acessa MongoDB | Use hostname `mongodb` e DB Name `tpch_bi` |
-| Portas ocupadas | `docker ps` e mapeamentos em `compose.yaml` |
-| Quantidade incorreta | Limpe somente a coleção piloto e refaça a carga |
-| `ETL_LIMIT` alterado | A validação supõe coleção compatível com o limite atual |
-| Dashboard vazio | Execute queries e confira documentos/intervalo temporal |
-
-## Arquivos do repositório
-
-```text
-analytics-bi-redash/
-├── README.md
-├── .gitignore
-├── .env.example
-├── compose.yaml
-├── requirements.txt
-├── etl/
-│   ├── __init__.py
-│   ├── migrate.py
-│   └── validate.py
-├── queries/
-│   ├── 01_receita_regiao_cliente.json
-│   ├── 02_receita_ano_pedido.json
-│   ├── 03_top_marcas.json
-│   └── 04_pedidos_distintos_por_segmento.json
-├── scripts/
-│   ├── preflight.ps1
-│   ├── setup.ps1
-│   └── validate-files.py
-└── docs/
-    ├── MODELO.md
-    └── ATIVIDADE-EQUIPES.md
-```
-
-## Validação estática do projeto
-
-```powershell
-py scripts/validate-files.py
-docker compose config
-```
-
-A primeira valida sintaxe Python e JSON das consultas; a segunda verifica
-a configuração Compose (requer `.env`). **Essas verificações não substituem
-o teste integrado com MySQL, MongoDB e Redash**.
+Não use `docker compose down -v` para uma pausa: esse comando apaga os volumes. Para trocar de ambiente, gere `.env` novamente com setup.ps1 ou conserve o arquivo local correspondente ao banco. Não troque senhas de uma instância já inicializada apenas editando o `.env`.
 
 ## Referências
 
-- [Redash — MongoDB Querying](https://redash.io/help/data-sources/querying/mongodb/)
-- [Redash — Open Source Setup](https://redash.io/help/open-source/setup/)
-- [TPC-H — TPC Benchmark H](https://www.tpc.org/tpch/)
+- [Laboratório de referência](https://devlabs.escdodev.com.br/labs/tpch-mongodb-bi)
+- [TPC-H, especificação oficial](https://www.tpc.org/tpc_documents_current_versions/pdf/tpc-h_v2.17.2.pdf), definição de itens recebidos após a data comprometida
+- [DuckDB, extensão TPC-H](https://duckdb.org/docs/stable/core_extensions/tpch), geração com dbgen
+- [MySQL, distribuição ZIP para Windows](https://dev.mysql.com/doc/refman/8.0/en/windows-install-archive.html)
+- [MongoDB, instalação ZIP para Windows](https://www.mongodb.com/docs/v6.0/tutorial/install-mongodb-on-windows-zip/)
+- [Redash, consultas MongoDB](https://redash.io/help/data-sources/querying/mongodb/)

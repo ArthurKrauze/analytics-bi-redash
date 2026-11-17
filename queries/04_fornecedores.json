@@ -1,0 +1,85 @@
+{
+  "collection": "fato_entregas",
+  "aggregate": [
+    {
+      "$group": {
+        "_id": {
+          "id": "$fornecedor.id",
+          "nome": "$fornecedor.nome"
+        },
+        "total_itens": {
+          "$sum": 1
+        },
+        "itens_atrasados": {
+          "$sum": {
+            "$cond": [
+              "$entrega.atrasada",
+              1,
+              0
+            ]
+          }
+        },
+        "dias_atraso_total": {
+          "$sum": "$entrega.diasAtraso"
+        },
+        "media_dias_atraso": {
+          "$avg": {
+            "$cond": [
+              "$entrega.atrasada",
+              "$entrega.diasAtraso",
+              null
+            ]
+          }
+        }
+      }
+    },
+    {
+      "$project": {
+        "_id": 0,
+        "fornecedor_id": "$_id.id",
+        "fornecedor": "$_id.nome",
+        "total_itens": 1,
+        "itens_atrasados": 1,
+        "dias_atraso_total": 1,
+        "taxa_atraso_percentual": {
+          "$round": [
+            {
+              "$multiply": [
+                {
+                  "$divide": [
+                    "$itens_atrasados",
+                    "$total_itens"
+                  ]
+                },
+                100
+              ]
+            },
+            2
+          ]
+        },
+        "media_dias_atraso": {
+          "$round": [
+            "$media_dias_atraso",
+            2
+          ]
+        }
+      }
+    },
+    {
+      "$sort": [
+        {
+          "name": "itens_atrasados",
+          "direction": -1
+        },
+        {
+          "name": "total_itens",
+          "direction": -1
+        },
+        {
+          "name": "fornecedor_id",
+          "direction": 1
+        }
+      ]
+    }
+  ]
+}
